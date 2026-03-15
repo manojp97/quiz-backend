@@ -1,25 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
-const USERS_FILE = "./data/users.json";
-
-// Helper functions
-const getUsers = () => {
-  try {
-    const data = fs.readFileSync(USERS_FILE, "utf-8");
-    return JSON.parse(data || "[]");
-  } catch {
-    return [];
-  }
-};
-
-const saveUsers = (users) => {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-};
+const User = require("../models/User");
 
 // SIGNUP
 router.post("/signup", async (req, res) => {
@@ -28,41 +13,61 @@ router.post("/signup", async (req, res) => {
   if (!name || !email || !password)
     return res.status(400).json({ error: "All fields required" });
 
-  const users = getUsers();
-  if (users.find((u) => u.email === email))
-    return res.status(400).json({ error: "User already exists" });
+  try {
+    const existingUser = await User.findOne({ email });
+    if (existingUser)
+      return res.status(400).json({ error: "User already exists" });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const newUser = { id: Date.now(), name, email, password: hashedPassword };
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  users.push(newUser);
-  saveUsers(users);
+    const newUser = new User({
+      name,
+      email,
+      password: hashedPassword,
+    });
 
-  res.status(201).json({ message: "User created successfully" });
+    await newUser.save();
+
+    res.status(201).json({ message: "User created successfully" });
+
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
 // LOGIN
 router.post("/login", async (req, res) => {
+
   const { email, password } = req.body;
+
   if (!email || !password)
     return res.status(400).json({ error: "Email and password required" });
 
-  const users = getUsers();
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(400).json({ error: "User not found" });
+  try {
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
+    const user = await User.findOne({ email });
 
-  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-    expiresIn: "1d",
-  });
+    if (!user)
+      return res.status(400).json({ error: "User not found" });
 
-  res.json({
-    message: "Login successful",
-    token,
-    user: { id: user.id, name: user.name, email: user.email },
-  });
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch)
+      return res.status(400).json({ error: "Invalid credentials" });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
+
+    res.json({
+      message: "Login successful",
+      token,
+      user: { id: user._id, name: user.name, email: user.email },
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
 module.exports = router;
